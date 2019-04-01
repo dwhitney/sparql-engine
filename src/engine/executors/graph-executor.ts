@@ -30,6 +30,7 @@ import { map, shareReplay, mergeMap } from 'rxjs/operators'
 import { rdf } from '../../utils'
 import { Algebra } from 'sparqljs'
 import Dataset from '../../rdf/dataset'
+import { Set } from 'immutable'
 import { Bindings } from '../../rdf/bindings'
 import ExecutionContext from '../context/execution-context'
 
@@ -56,8 +57,14 @@ export default class GraphExecutor extends Executor {
    * @param  options - Execution options
    * @return An iterator used to evaluate a GRAPH clause
    */
-  buildIterator (source: Observable<Bindings>, node: Algebra.GraphNode, context: ExecutionContext): Observable<Bindings> {
-
+  buildIterator (source: Observable<Bindings>, node: Algebra.GraphNode, context: ExecutionContext, inScopeVariableNames: Set<string>): Observable<Bindings> {
+    /*
+    console.log("*********** node ***********")
+    console.log(JSON.stringify(node, null, 2))
+    console.log("*********** context ***********")
+    console.log(context)
+    */
+    console.log("inScopeVariableNames", inScopeVariableNames)
     let subquery: Algebra.RootNode
     if (node.patterns[0].type === 'query') {
       subquery = (<Algebra.RootNode> node.patterns[0])
@@ -80,12 +87,12 @@ export default class GraphExecutor extends Executor {
         const eachBinding = from([bindings])
         const variableIRI = bindings.get(node.name)
         if(variableIRI){
-          return this._execute(eachBinding, variableIRI, subquery, context)
+          return this._execute(eachBinding, variableIRI, subquery, context, inScopeVariableNames)
         }else if (context.namedGraphs.length > 0) {
 
           //if there are named graphs, execute them on each 
           const iterators = context.namedGraphs.map((iri: string) => {
-            return this._execute(eachBinding, iri, subquery, context).pipe(map(b => {
+            return this._execute(eachBinding, iri, subquery, context, inScopeVariableNames).pipe(map(b => {
               return b.extendMany([[node.name, iri]])
             }))
           })
@@ -97,7 +104,7 @@ export default class GraphExecutor extends Executor {
     }
   
     // otherwise, execute the subquery using the Graph
-    return this._execute(source, node.name, subquery, context)
+    return this._execute(source, node.name, subquery, context, inScopeVariableNames)
   }
 
 
@@ -110,9 +117,9 @@ export default class GraphExecutor extends Executor {
    * @param  options   - Execution options
    * @return An iterator used to evaluate a GRAPH clause
    */
-  _execute (source: Observable<Bindings>, iri: string, subquery: Algebra.RootNode, context: ExecutionContext): Observable<Bindings> {
+  _execute (source: Observable<Bindings>, iri: string, subquery: Algebra.RootNode, context: ExecutionContext, inScopeVariableNames: Set<string>): Observable<Bindings> {
     const opts = context.clone()
     opts.defaultGraphs = [ iri ]
-    return this._builder!._buildQueryPlan(subquery, opts, source)
+    return this._builder!._buildQueryPlan(subquery, opts, inScopeVariableNames, source)
   }
 }

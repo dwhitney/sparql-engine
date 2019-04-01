@@ -27,6 +27,7 @@ SOFTWARE.
 import Executor from './executor'
 import { Observable, of } from 'rxjs'
 import { shareReplay } from 'rxjs/operators'
+import { Set } from 'immutable'
 import { Consumable, ErrorConsumable } from '../../operators/update/consumer'
 import InsertConsumer from '../../operators/update/insert-consumer'
 import DeleteConsumer from '../../operators/update/delete-consumer'
@@ -63,7 +64,7 @@ export default class UpdateExecutor extends Executor {
    * @param options - Execution options
    * @return A Consumable used to evaluatethe set of update queries
    */
-  execute (updates: Array<Algebra.UpdateQueryNode | Algebra.UpdateClearNode | Algebra.UpdateCopyMoveNode>, context: ExecutionContext): Consumable {
+  execute (updates: Array<Algebra.UpdateQueryNode | Algebra.UpdateClearNode | Algebra.UpdateCopyMoveNode>, context: ExecutionContext, inScopeVariableNames: Set<string>): Consumable {
     let queries
     return new ManyConsumers(updates.map(update => {
       if ('updateType' in update) {
@@ -71,7 +72,7 @@ export default class UpdateExecutor extends Executor {
           case 'insert':
           case 'delete':
           case 'insertdelete':
-            return this._handleInsertDelete(<Algebra.UpdateQueryNode> update, context)
+            return this._handleInsertDelete(<Algebra.UpdateQueryNode> update, context, inScopeVariableNames)
           default:
             return new ErrorConsumable(`Unsupported SPARQL UPDATE query: ${update.updateType}`)
         }
@@ -80,20 +81,20 @@ export default class UpdateExecutor extends Executor {
           case 'clear':
             return this._handleClearQuery(<Algebra.UpdateClearNode> update)
           case 'add':
-            return this._handleInsertDelete(rewritings.rewriteAdd(<Algebra.UpdateCopyMoveNode> update, this._dataset), context)
+            return this._handleInsertDelete(rewritings.rewriteAdd(<Algebra.UpdateCopyMoveNode> update, this._dataset), context, inScopeVariableNames)
           case 'copy':
             // A COPY query is rewritten into a sequence [CLEAR query, INSERT query]
             queries = rewritings.rewriteCopy(<Algebra.UpdateCopyMoveNode> update, this._dataset)
             return new ManyConsumers([
               this._handleClearQuery(queries[0]),
-              this._handleInsertDelete(queries[1], context)
+              this._handleInsertDelete(queries[1], context, inScopeVariableNames)
             ])
           case 'move':
             // A MOVE query is rewritten into a sequence [CLEAR query, INSERT query, CLEAR query]
             queries = rewritings.rewriteMove(<Algebra.UpdateCopyMoveNode> update, this._dataset)
             return new ManyConsumers([
               this._handleClearQuery(queries[0]),
-              this._handleInsertDelete(queries[1], context),
+              this._handleInsertDelete(queries[1], context, inScopeVariableNames),
               this._handleClearQuery(queries[2])
             ])
           default:
@@ -111,7 +112,7 @@ export default class UpdateExecutor extends Executor {
    * @param options - Execution options
    * @return A Consumer used to evaluate SPARQL UPDATE queries
    */
-  _handleInsertDelete (update: Algebra.UpdateQueryNode, context: ExecutionContext): Consumable {
+  _handleInsertDelete (update: Algebra.UpdateQueryNode, context: ExecutionContext, inScopeVariableNames: Set<string>): Consumable {
     let source: Observable<Bindings> = of(new BindingBase())
     let graph: Graph | null = null
     let consumables: Consumable[] = []
@@ -128,7 +129,7 @@ export default class UpdateExecutor extends Executor {
         // copy the FROM clause from the original UPDATE query
         from: ('from' in update) ? update.from : undefined
       }
-      source = this._builder!._buildQueryPlan(node, context)
+      source = this._builder!._buildQueryPlan(node, context, inScopeVariableNames)
     }
 
     // clone the source first

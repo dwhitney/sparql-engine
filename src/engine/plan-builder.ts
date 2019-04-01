@@ -29,6 +29,7 @@ import { Algebra, Parser } from 'sparqljs'
 import { Observable, of, merge } from 'rxjs'
 import { map, take, skip } from 'rxjs/operators'
 import { Consumable } from '../operators/update/consumer'
+import { Set } from 'immutable'
 // RDF core classes
 import { terms } from '../rdf-terms'
 import { Bindings, BindingBase } from '../rdf/bindings'
@@ -199,9 +200,9 @@ export default class PlanBuilder {
     }
     switch (query.type) {
       case 'query':
-        return this._buildQueryPlan(query, context)
+        return this._buildQueryPlan(query, context, Set())
       case 'update':
-        return this._updateExecutor.execute(query.updates, context)
+        return this._updateExecutor.execute(query.updates, context, Set())
       default:
         throw new SyntaxError(`Unsupported SPARQL query type: ${query.type}`)
     }
@@ -214,7 +215,8 @@ export default class PlanBuilder {
    * @param  source - Source iterator
    * @return An iterator that can be consumed to evaluate the query.
    */
-  _buildQueryPlan (query: Algebra.RootNode, context: ExecutionContext, source?: Observable<Bindings>): Observable<Bindings> {
+  _buildQueryPlan (query: Algebra.RootNode, context: ExecutionContext, inScopeVariableNames: Set<string>, source?: Observable<Bindings>): Observable<Bindings> {
+
     if (isNull(source) || isUndefined(source)) {
       // build pipeline starting iterator
       source = of(new BindingBase())
@@ -243,7 +245,7 @@ export default class PlanBuilder {
         type: 'query',
         where: query.where.concat(where)
       }
-      return this._buildQueryPlan(construct, context, source)
+      return this._buildQueryPlan(construct, context, inScopeVariableNames, source)
     }
 
     // Handles FROM clauses
@@ -255,7 +257,7 @@ export default class PlanBuilder {
     // Handles WHERE clause
     let graphIterator: Observable<Bindings>
     if (query.where != null && query.where.length > 0) {
-      graphIterator = this._buildWhere(source, query.where, context)
+      graphIterator = this._buildWhere(source, query.where, context, inScopeVariableNames)
     } else {
       graphIterator = of(new BindingBase())
     }
@@ -311,7 +313,7 @@ export default class PlanBuilder {
    * @param  options  - Execution options
    * @return An iterator used to evaluate the WHERE clause
    */
-  _buildWhere (source: Observable<Bindings>, groups: Algebra.PlanNode[], context: ExecutionContext): Observable<Bindings> {
+  _buildWhere (source: Observable<Bindings>, groups: Algebra.PlanNode[], context: ExecutionContext, inScopeVariableNames: Set<string>): Observable<Bindings> {
     groups = sortBy(groups, g => {
       switch (g.type) {
         case 'bgp':
@@ -327,7 +329,7 @@ export default class PlanBuilder {
 
     // Handle VALUES clauses using query rewriting
     if (some(groups, g => g.type === 'values')) {
-      return this._buildValues(source, groups, context)
+      return this._buildValues(source, groups, context, inScopeVariableNames)
     }
 
     // merge BGPs on the same level
@@ -346,7 +348,7 @@ export default class PlanBuilder {
     groups = newGroups
 
     return groups.reduce((source, group) => {
-      return this._buildGroup(source, group, context)
+      return this._buildGroup(source, group, context, inScopeVariableNames)
     }, source)
   }
 
@@ -357,7 +359,7 @@ export default class PlanBuilder {
    * @param  options - Execution options
    * @return An iterator used to evaluate the SPARQL Group
    */
-  _buildGroup (source: Observable<Bindings>, group: Algebra.PlanNode, context: ExecutionContext): Observable<Bindings> {
+  _buildGroup (source: Observable<Bindings>, group: Algebra.PlanNode, context: ExecutionContext, inScopeVariableNames: Set<string>): Observable<Bindings> {
     // Reset flags on the options for child iterators
     let childContext = context.clone()
 
@@ -386,13 +388,13 @@ export default class PlanBuilder {
         }
         return iter
       case 'query':
-        return this._buildQueryPlan(group as Algebra.RootNode, childContext, source)
+        return this._buildQueryPlan(group as Algebra.RootNode, childContext, inScopeVariableNames, source)
       case 'graph':
         if (isNull(this._graphExecutor)) {
           throw new Error('A PlanBuilder cannot evaluate a GRAPH clause without a GraphExecutor')
         }
         // delegate GRAPH evaluation to an executor
-        return this._graphExecutor.buildIterator(source, group as Algebra.GraphNode, childContext)
+        return this._graphExecutor.buildIterator(source, group as Algebra.GraphNode, childContext, inScopeVariableNames)
       case 'service':
         if (isNull(this._serviceExecutor)) {
           throw new Error('A PlanBuilder cannot evaluate a SERVICE clause without a ServiceExecutor')
@@ -400,24 +402,24 @@ export default class PlanBuilder {
         // delegate SERVICE evaluation to an executor
         return this._serviceExecutor.buildIterator(source, group as Algebra.ServiceNode, childContext)
       case 'group':
-        return this._buildWhere(source, (group as Algebra.GroupNode).patterns, childContext)
+        return this._buildWhere(source, (group as Algebra.GroupNode).patterns, childContext, inScopeVariableNames)
       case 'optional':
-        return optional(source, (group as Algebra.GroupNode).patterns, this, childContext)
+        return optional(source, (group as Algebra.GroupNode).patterns, this, childContext, inScopeVariableNames)
       case 'union':
         return merge(...(group as Algebra.GroupNode).patterns.map(patternToken => {
-          return this._buildGroup(source, patternToken, childContext)
+          return this._buildGroup(source, patternToken, childContext, inScopeVariableNames)
         }))
       case 'minus':
-        const rightSource = this._buildWhere(of(new BindingBase()), (group as Algebra.GroupNode).patterns, childContext)
+        const rightSource = this._buildWhere(of(new BindingBase()), (group as Algebra.GroupNode).patterns, childContext, inScopeVariableNames)
         return minus(source, rightSource)
       case 'filter':
         const filter = group as Algebra.FilterNode
         // FILTERs (NOT) EXISTS are handled using dedicated operators
         switch (filter.expression.operator) {
           case 'exists':
-            return exists(source, filter.expression.args, this, false, childContext)
+            return exists(source, filter.expression.args, this, false, childContext, inScopeVariableNames)
           case 'notexists':
-            return exists(source, filter.expression.args, this, true, childContext)
+            return exists(source, filter.expression.args, this, true, childContext, inScopeVariableNames)
           default:
             return source.pipe(sparqlFilter(filter.expression, this._customFunctions))
         }
@@ -438,7 +440,7 @@ export default class PlanBuilder {
    * @param options - Execution options
    * @return An iterator which evaluates a SPARQL query with VALUES clause(s)
    */
-  _buildValues (source: Observable<Bindings>, groups: Algebra.PlanNode[], context: ExecutionContext): Observable<Bindings> {
+  _buildValues (source: Observable<Bindings>, groups: Algebra.PlanNode[], context: ExecutionContext, inScopeVariableNames: Set<string>): Observable<Bindings> {
     let [ values, others ] = partition(groups, g => g.type === 'values')
     const bindingsLists = values.map(g => (g as Algebra.ValuesNode).values)
     // for each VALUES clause
@@ -448,7 +450,7 @@ export default class PlanBuilder {
         const bindings = BindingBase.fromObject(b)
         // BIND each group with the set of bindings and then evaluates it
         const temp = others.map(g => deepApplyBindings(g, bindings))
-        return extendByBindings(this._buildWhere(source, temp, context), bindings)
+        return extendByBindings(this._buildWhere(source, temp, context, inScopeVariableNames), bindings)
       })
       return merge(...unionBranches)
     })

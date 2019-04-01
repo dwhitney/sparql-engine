@@ -29,6 +29,7 @@ import { Util } from 'n3'
 import { Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 import { Algebra } from 'sparqljs'
+import { Set } from 'immutable'
 import { Bindings } from './rdf/bindings'
 
 /**
@@ -121,6 +122,48 @@ export namespace rdf {
     return str.startsWith('?')
   }
 
+  type HasTriplesOrName = Algebra.UpdateGraphNode | Algebra.UpdateGraphTarget | Algebra.BGPNode | Algebra.GraphNode 
+
+  export function getVariableNames(node: HasTriplesOrName): Set<string> {
+
+    const fromName = (name: string) => isVariable(name) ? Set(name) : Set()
+
+    const fromTriple = ({ subject, predicate, object }: Algebra.TripleObject): Set<string> =>
+      Set([subject, predicate, object]).filter(isVariable)
+
+    if(<Algebra.UpdateGraphNode>node){
+      const updateGraphNode = <Algebra.UpdateGraphNode>node
+      return Set(updateGraphNode.triples)
+        .flatMap(fromTriple) 
+        .concat(fromName(updateGraphNode.name))
+    }
+
+    if(<Algebra.UpdateGraphTarget>node){
+      const updateGraphTarget = <Algebra.UpdateGraphTarget>node
+      return (updateGraphTarget.name !== undefined) ? fromName(updateGraphTarget.name) : Set() 
+    }
+    
+    if(<Algebra.BGPNode>node){
+      const bgpNode = <Algebra.BGPNode>node
+      const triples: Algebra.TripleObject[] = []
+      bgpNode.triples.forEach(obj => {
+        if(<Algebra.TripleObject>obj){
+          triples.push(<Algebra.TripleObject>obj)
+        }
+      })
+      return Set(triples).flatMap(fromTriple)
+    }
+
+    if(<Algebra.GraphNode>node){
+      const graphNode = <Algebra.GraphNode>node
+      return fromName(graphNode.name)
+    }
+
+    return Set()
+  }
+/*
+  export function getVariableNames
+*/
   /**
    * Create an IRI under the XSD namespace
    * @param suffix - Suffix appended to the XSD namespace to create an IRI

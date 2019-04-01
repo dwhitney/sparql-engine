@@ -52,6 +52,7 @@
     "typescript": "^3.0.3"
   },
   "dependencies": {
+    "immutable": "^4.0.0-rc.12",
     "lodash": "^4.17.11",
     "moment": "^2.22.2",
     "n3": "^0.11.3",

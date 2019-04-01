@@ -117,7 +117,7 @@ export default class ExecutionContext {
     this._properties.set(key, value)
   }
 
-  /**
+/**
    * Clone the execution context
    * @return A clone of the execution context
    */
