@@ -1,10 +1,11 @@
 {
-  "name": "sparql-engine",
+  "name": "graphado-sparql-engine",
   "version": "0.5.3",
   "description": "A framework for building SPARQL query engines in Javascript",
   "main": "dist/api.js",
   "types": "dist/api.d.ts",
   "scripts": {
+    "login": "aws codeartifact login --tool npm --domain graphado --repository npmjs --domain-owner 098215713979",
     "lint": "tslint -c ./tslint.json --fix src/*.ts src/**/*.ts",
     "build": "tsc",
     "pretest": "npm run build",
