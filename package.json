@@ -1,6 +1,6 @@
 {
-  "name": "graphado-sparql-engine",
-  "version": "0.5.4",
+  "name": "sparql-engine",
+  "version": "0.5.3",
   "description": "A framework for building SPARQL query engines in Javascript",
   "main": "dist/api.js",
   "types": "dist/api.d.ts",
